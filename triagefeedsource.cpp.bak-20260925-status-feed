@@ -1,0 +1,98 @@
+#include "triagefeedsource.h"
+
+#include <QDir>
+#include <QFile>
+#include <QRegularExpression>
+#include <QDebug>
+#include <algorithm>
+
+namespace {
+// Mesma convenção de nome de arquivo do CostDataSource, mas aqui capturamos
+// também a hora, o id do evento e o status (success/timeout/error/crash).
+const QRegularExpression kFilenameRe(
+    QStringLiteral(R"(^(\d{8})-(\d{6})_(.+)_([a-z]+)\.md$)"));
+const QRegularExpression kCostRe(QStringLiteral(R"(^- Cost \(USD\): ([0-9.]+))"),
+                                  QRegularExpression::MultilineOption);
+const QRegularExpression kJenkinsRe(
+    QStringLiteral("## Jenkins message that triggered this run\\n```\\n(.*?)\\n```"),
+    QRegularExpression::DotMatchesEverythingOption);
+
+const int kMaxFeedEntries = 100;
+}
+
+TriageFeedSource::TriageFeedSource(const QString &reportsDir, QObject *parent)
+    : QObject(parent), m_reportsDir(reportsDir)
+{
+    rescan();
+
+    if (QDir(m_reportsDir).exists())
+        m_watcher.addPath(m_reportsDir);
+    else
+        qWarning() << "Pasta de relatórios de custo não existe:" << m_reportsDir;
+
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &TriageFeedSource::rescan);
+}
+
+QVariantList TriageFeedSource::feed() const
+{
+    return m_feed;
+}
+
+void TriageFeedSource::rescan()
+{
+    QDir dir(m_reportsDir);
+    if (!dir.exists()) {
+        qWarning() << "Pasta de relatórios de custo não existe:" << m_reportsDir;
+        return;
+    }
+
+    QVariantList entries;
+    const QStringList files = dir.entryList(QStringList() << "*.md", QDir::Files, QDir::Name);
+    for (const QString &fileName : files) {
+        const QRegularExpressionMatch nameMatch = kFilenameRe.match(fileName);
+        if (!nameMatch.hasMatch())
+            continue;
+
+        const QString date = nameMatch.captured(1);
+        const QString time = nameMatch.captured(2);
+        const QString id = nameMatch.captured(3);
+        const QString status = nameMatch.captured(4);
+
+        QFile file(dir.filePath(fileName));
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        const QString content = QString::fromUtf8(file.readAll());
+
+        double cost = 0.0;
+        const QRegularExpressionMatch costMatch = kCostRe.match(content);
+        if (costMatch.hasMatch())
+            cost = costMatch.captured(1).toDouble();
+
+        QString jenkinsText;
+        const QRegularExpressionMatch jenkinsMatch = kJenkinsRe.match(content);
+        if (jenkinsMatch.hasMatch())
+            jenkinsText = jenkinsMatch.captured(1).trimmed();
+
+        QVariantMap entry;
+        entry[QStringLiteral("date")] =
+            QStringLiteral("%1-%2-%3").arg(date.left(4), date.mid(4, 2), date.mid(6, 2));
+        entry[QStringLiteral("time")] =
+            QStringLiteral("%1:%2:%3").arg(time.left(2), time.mid(2, 2), time.mid(4, 2));
+        entry[QStringLiteral("id")] = id;
+        entry[QStringLiteral("status")] = status;
+        entry[QStringLiteral("cost_usd")] = cost;
+        entry[QStringLiteral("jenkins_text")] = jenkinsText;
+        entries.append(entry);
+    }
+
+    // O nome do arquivo já ordena por data/hora; só precisamos inverter pra
+    // deixar o mais recente primeiro, e cortar num limite razoável.
+    std::reverse(entries.begin(), entries.end());
+    if (entries.size() > kMaxFeedEntries)
+        entries = entries.mid(0, kMaxFeedEntries);
+
+    if (entries != m_feed) {
+        m_feed = entries;
+        emit feedChanged();
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "id": "tor-4492-error-workdir-oe-sources-meta-freescale",
+      "ticket": "TOR-4492",
+      "ticket_url": "https://toradex.atlassian.net/browse/TOR-4492",
+      "keywords": [
+        "ERROR: /workdir/oe/sources/meta-freescale/recipes-bsp/firmware-imx/firmware-nxp-wifi_1.1.bb: Substring appears 3 times"
+      ],
+      "linked_by": "U0A82HS0AP7",
+      "linked_at": "2026-09-11T00:57:08Z",
+      "source_jenkins_text": "Image Common-torizon-nxp Scarthgap-7.x.y Ext Integration Matrix - #18 Still Failing after 3 min 55 sec and counting (<https://jenkins.int.toradex.com/job/image-common-torizon-nxp-scarthgap-7.x.y-extint-matrix/18/display/redirect|Open>)"
+    }
+  ]
+}

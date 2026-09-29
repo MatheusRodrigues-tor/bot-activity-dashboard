@@ -1,0 +1,772 @@
+#include <QGuiApplication>
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQuickItem>
+#include <QQuickWindow>
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QTimer>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+#include "costdatasource.h"
+#include "triagefeedsource.h"
+#include "referencecatalogsource.h"
+
+namespace {
+// Página HTML mínima com auto-refresh, servida junto com o PNG por um
+// container HTTP separado (ex: nginx:alpine apontando pro mesmo diretório).
+const char *kIndexHtml = R"HTML(<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sherlog Cost Dashboard</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b3d66;
+      color: #e8eaed;
+      font-family: -apple-system, system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+    }
+    #app { width: 100%; max-width: 1200px; padding: 16px; box-sizing: border-box; }
+    #controls { padding: 6px 0 14px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    #controls label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    #controls input[type="date"] {
+      background: #0a2e4d;
+      color: #e8eaed;
+      border: 1px solid #29abe2;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 13px;
+      color-scheme: dark;
+    }
+    #resetRange {
+      background: #0a2e4d;
+      color: #f5a623;
+      border: 1px solid #f5a623;
+      border-radius: 4px;
+      padding: 5px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #resetRange:hover { background: #123a5e; }
+    /* Cartões de resumo (KPI) — adicione um novo <div class="stat-tile"> no
+       HTML abaixo e preencha o valor em applyFilter() pra plugar mais um. */
+    #stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .stat-tile {
+      flex: 1;
+      min-width: 130px;
+      background: #0a2e4d;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 10px 16px;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: #9fb3c8;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stat-value { font-size: 22px; font-weight: 600; color: #e8eaed; margin-top: 4px; }
+    #chart-row { display: flex; gap: 16px; align-items: stretch; }
+    #chart-wrap { flex: 1; min-width: 0; }
+    canvas { display: block; width: 100%; height: auto; border-radius: 8px; }
+    #day-average-card {
+      width: 210px;
+      flex: 0 0 210px;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, #0d3a63 0%, #07203a 100%);
+      border: 1px solid rgba(41,171,226,0.45);
+      border-radius: 8px;
+      padding: 22px 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+    }
+    .day-card-label {
+      color: #9fb3c8;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    #dayAverage { color: #a8cc3a; font-size: 32px; font-weight: 700; margin: 10px 0 6px; }
+    #dayDate { color: #e8eaed; font-size: 14px; font-weight: 600; }
+    #dayDetails { color: #9fb3c8; font-size: 12px; line-height: 1.5; margin-top: 12px; }
+    @media (max-width: 760px) {
+      #chart-row { flex-direction: column; }
+      #day-average-card { width: 100%; flex-basis: auto; padding: 16px; }
+    }
+
+    /* Abas — pra adicionar uma nova: 1 botão em #tabs com data-tab="xyz",
+       1 <div id="tab-xyz" class="tab-panel">, e uma função de refresh no JS. */
+    #tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+    .tab-btn {
+      background: transparent;
+      color: #9fb3c8;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .tab-btn.active { color: #e8eaed; border-bottom-color: #f5a623; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .list-card {
+      background: #0a2e4d;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 10px;
+    }
+    .list-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .list-card-date { color: #9fb3c8; font-size: 12px; }
+    .list-card-cost { color: #a8cc3a; font-weight: 600; font-size: 13px; margin-left: auto; }
+    .list-card-body { font-size: 13px; color: #cbd5df; line-height: 1.4; word-break: break-word; }
+    .status-badge {
+      display: inline-block;
+      border: 1px solid;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .field-label { color: #9fb3c8; font-size: 12px; }
+    .empty-hint { color: #9fb3c8; font-size: 13px; }
+    .ticket-link { color: #29abe2; font-weight: 600; text-decoration: none; }
+    .ticket-link:hover { text-decoration: underline; }
+    #failureSearch {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0a2e4d;
+      color: #e8eaed;
+      border: 1px solid #29abe2;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+  <div id="tabs">
+    <button class="tab-btn active" data-tab="cost">Cost</button>
+    <button class="tab-btn" data-tab="triages">Recent Triages</button>
+    <button class="tab-btn" data-tab="known-failures">Known Failures</button>
+    <button class="tab-btn" data-tab="linked-tickets">Linked Tickets</button>
+  </div>
+
+  <div id="tab-cost" class="tab-panel active">
+    <div id="controls">
+      <label>From <input type="date" id="startDate"></label>
+      <label>To <input type="date" id="endDate"></label>
+      <button id="resetRange">All</button>
+    </div>
+    <div id="stats">
+      <div class="stat-tile">
+        <div class="stat-label">Total</div>
+        <div class="stat-value" id="statTotal">$0.00</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Average / day</div>
+        <div class="stat-value" id="statAvg">$0.00</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Peak day</div>
+        <div class="stat-value" id="statPeak">$0.00</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Days tracked</div>
+        <div class="stat-value" id="statDays">0</div>
+      </div>
+    </div>
+    <div id="chart-row">
+      <div id="chart-wrap">
+        <canvas id="chart" width="1400" height="760"></canvas>
+      </div>
+      <aside id="day-average-card" aria-live="polite">
+        <div class="day-card-label">Average / analysis</div>
+        <div id="dayAverage">$0.00</div>
+        <div id="dayDate">No data</div>
+        <div id="dayDetails">0 analyses &middot; $0.00 total</div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="tab-triages" class="tab-panel">
+    <div id="triageList"></div>
+  </div>
+
+  <div id="tab-known-failures" class="tab-panel">
+    <input type="text" id="failureSearch" placeholder="Search known failures...">
+    <div id="failureList"></div>
+  </div>
+
+  <div id="tab-linked-tickets" class="tab-panel">
+    <div id="ticketList"></div>
+  </div>
+  </div>
+  <script>
+    var allCostData = [];
+    var costData = [];
+    var hoverIndex = -1;
+    var canvas = document.getElementById("chart");
+    var ctx = canvas.getContext("2d");
+    var startInput = document.getElementById("startDate");
+    var endInput = document.getElementById("endDate");
+    var resetBtn = document.getElementById("resetRange");
+
+    function updateDayCard(index) {
+      if (costData.length === 0) {
+        document.getElementById("dayAverage").textContent = "$0.00";
+        document.getElementById("dayDate").textContent = "No data";
+        document.getElementById("dayDetails").textContent = "0 analyses · $0.00 total";
+        return;
+      }
+      var safeIndex = Math.max(0, Math.min(costData.length - 1, index));
+      var day = costData[safeIndex];
+      var count = Number(day.analysis_count) || 0;
+      var average = count > 0 ? day.cost_usd / count : 0;
+      document.getElementById("dayAverage").textContent = "$" + average.toFixed(2);
+      document.getElementById("dayDate").textContent = day.date;
+      document.getElementById("dayDetails").textContent = count +
+        (count === 1 ? " analysis" : " analyses") + " · $" + day.cost_usd.toFixed(2) + " total";
+    }
+
+    function xForIndex(idx, plotLeft, plotW) {
+      return costData.length > 1
+        ? plotLeft + (plotW * idx) / (costData.length - 1)
+        : plotLeft;
+    }
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function buildSmoothPath(plotLeft, plotW, yForCost) {
+      ctx.beginPath();
+      for (var i = 0; i < costData.length; i++) {
+        var x = xForIndex(i, plotLeft, plotW), y = yForCost(costData[i].cost_usd);
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          var prevX = xForIndex(i - 1, plotLeft, plotW), prevY = yForCost(costData[i - 1].cost_usd);
+          ctx.quadraticCurveTo(prevX, prevY, (prevX + x) / 2, (prevY + y) / 2);
+          ctx.lineTo(x, y);
+        }
+      }
+    }
+
+    function draw() {
+      var width = canvas.width, height = canvas.height;
+      var bg = ctx.createLinearGradient(0, 0, 0, height);
+      bg.addColorStop(0, "#0d3a63");
+      bg.addColorStop(1, "#07203a");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = "#e8eaed";
+      ctx.font = "600 20px -apple-system, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText("Sherlog Builds — daily cost (USD)", width / 2, 18);
+
+      if (costData.length === 0) return;
+
+      var padding = 54, plotTop = 64, plotBottom = height - padding;
+      var plotLeft = padding, plotRight = width - padding;
+      var plotW = plotRight - plotLeft, plotH = plotBottom - plotTop;
+
+      var maxCost = 0;
+      costData.forEach(function (d) { maxCost = Math.max(maxCost, d.cost_usd); });
+      var axisMax = Math.max(maxCost * 1.15, 0.01);
+
+      function yForCost(cost) {
+        return plotTop + plotH - (plotH * cost) / axisMax;
+      }
+
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "#8a8f98";
+      ctx.font = "12px -apple-system, system-ui, sans-serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      var ySteps = 4;
+      for (var s = 0; s <= ySteps; s++) {
+        var value = axisMax * s / ySteps;
+        var y = yForCost(value);
+        ctx.beginPath();
+        ctx.moveTo(plotLeft, y);
+        ctx.lineTo(plotRight, y);
+        ctx.stroke();
+        ctx.fillText("$" + value.toFixed(2), plotLeft - 10, y);
+      }
+      ctx.setLineDash([]);
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      var labelCount = Math.min(costData.length, 7);
+      var step = Math.max(1, Math.floor((costData.length - 1) / (labelCount - 1 || 1)));
+      for (var j = 0; j < costData.length; j += step)
+        ctx.fillText(costData[j].date.substring(5), xForIndex(j, plotLeft, plotW), plotBottom + 12);
+      var lastIdx = costData.length - 1;
+      ctx.fillText(costData[lastIdx].date.substring(5), xForIndex(lastIdx, plotLeft, plotW), plotBottom + 12);
+
+      var areaGrad = ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+      areaGrad.addColorStop(0, "rgba(245,166,35,0.30)");
+      areaGrad.addColorStop(1, "rgba(41,171,226,0)");
+      buildSmoothPath(plotLeft, plotW, yForCost);
+      ctx.lineTo(xForIndex(lastIdx, plotLeft, plotW), plotBottom);
+      ctx.lineTo(plotLeft, plotBottom);
+      ctx.closePath();
+      ctx.fillStyle = areaGrad;
+      ctx.fill();
+
+      var lineGrad = ctx.createLinearGradient(plotLeft, 0, plotRight, 0);
+      lineGrad.addColorStop(0, "#f5a623");
+      lineGrad.addColorStop(1, "#29abe2");
+      ctx.save();
+      ctx.shadowColor = "rgba(41,171,226,0.5)";
+      ctx.shadowBlur = 8;
+      buildSmoothPath(plotLeft, plotW, yForCost);
+      ctx.strokeStyle = lineGrad;
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, plotBottom);
+      ctx.lineTo(plotRight, plotBottom);
+      ctx.stroke();
+
+      var lastX = xForIndex(lastIdx, plotLeft, plotW), lastY = yForCost(costData[lastIdx].cost_usd);
+      ctx.fillStyle = "#a8cc3a";
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#07203a";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = "#e8eaed";
+      ctx.font = "600 13px -apple-system, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("$" + costData[lastIdx].cost_usd.toFixed(2), lastX, lastY - 12);
+
+      if (hoverIndex >= 0 && hoverIndex < costData.length) {
+        var hx = xForIndex(hoverIndex, plotLeft, plotW), hy = yForCost(costData[hoverIndex].cost_usd);
+
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(hx, plotTop);
+        ctx.lineTo(hx, plotBottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = "#a8cc3a";
+        ctx.beginPath();
+        ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#07203a";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        var label = costData[hoverIndex].date + "   $" + costData[hoverIndex].cost_usd.toFixed(2);
+        ctx.font = "600 13px -apple-system, system-ui, sans-serif";
+        var textWidth = ctx.measureText(label).width;
+        var boxX = Math.min(Math.max(hx - textWidth / 2 - 10, 4), width - textWidth - 20);
+        var boxY = Math.max(hy - 40, 4);
+        ctx.fillStyle = "rgba(7,32,58,0.92)";
+        ctx.strokeStyle = "rgba(255,255,255,0.15)";
+        ctx.lineWidth = 1;
+        roundRect(boxX, boxY, textWidth + 20, 26, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, boxX + 10, boxY + 13);
+      }
+    }
+
+    canvas.addEventListener("mousemove", function (ev) {
+      if (costData.length === 0) return;
+      var rect = canvas.getBoundingClientRect();
+      var scaleX = canvas.width / rect.width;
+      var mx = (ev.clientX - rect.left) * scaleX;
+      var padding = 54, plotLeft = padding, plotW = canvas.width - padding * 2;
+      var idx = costData.length > 1
+        ? Math.round(((mx - plotLeft) / plotW) * (costData.length - 1))
+        : 0;
+      idx = Math.max(0, Math.min(costData.length - 1, idx));
+      if (idx !== hoverIndex) { hoverIndex = idx; updateDayCard(idx); draw(); }
+    });
+    canvas.addEventListener("mouseleave", function () {
+      hoverIndex = -1;
+      updateDayCard(costData.length - 1);
+      draw();
+    });
+
+    // Cartões de resumo (KPI) acima do gráfico. Pra adicionar um novo:
+    // 1) cria a <div class="stat-tile"> no HTML com um id novo;
+    // 2) calcula o valor aqui e escreve em .textContent, igual aos outros.
+    function updateStats() {
+      var total = costData.reduce(function (sum, d) { return sum + d.cost_usd; }, 0);
+      var avg = costData.length > 0 ? total / costData.length : 0;
+      var peak = costData.reduce(function (m, d) { return Math.max(m, d.cost_usd); }, 0);
+      document.getElementById("statTotal").textContent = "$" + total.toFixed(2);
+      document.getElementById("statAvg").textContent = "$" + avg.toFixed(2);
+      document.getElementById("statPeak").textContent = "$" + peak.toFixed(2);
+      document.getElementById("statDays").textContent = costData.length;
+    }
+
+    function applyFilter() {
+      var start = startInput.value, end = endInput.value;
+      costData = allCostData.filter(function (d) {
+        return (!start || d.date >= start) && (!end || d.date <= end);
+      });
+      updateStats();
+      hoverIndex = -1;
+      updateDayCard(costData.length - 1);
+      draw();
+    }
+
+    startInput.addEventListener("change", applyFilter);
+    endInput.addEventListener("change", applyFilter);
+    resetBtn.addEventListener("click", function () {
+      if (allCostData.length > 0) {
+        startInput.value = allCostData[0].date;
+        endInput.value = allCostData[allCostData.length - 1].date;
+      }
+      applyFilter();
+    });
+
+    function refreshData() {
+      fetch("cost_data.json?t=" + Date.now())
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          data.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+          allCostData = data;
+          if (!startInput.value && data.length > 0) startInput.value = data[0].date;
+          if (!endInput.value && data.length > 0) endInput.value = data[data.length - 1].date;
+          applyFilter();
+        })
+        .catch(function () {});
+    }
+    refreshData();
+    setInterval(refreshData, 5000);
+
+    // --- Abas ---------------------------------------------------------
+    var tabButtons = document.querySelectorAll(".tab-btn");
+    var tabPanels = document.querySelectorAll(".tab-panel");
+    tabButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        tabButtons.forEach(function (b) { b.classList.remove("active"); });
+        tabPanels.forEach(function (p) { p.classList.remove("active"); });
+        btn.classList.add("active");
+        document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+      });
+    });
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // --- Aba: Recent Triages -------------------------------------------
+    // Call-outcome badge - only shown for genuine call failures
+    // (timeout/error/crash), which are real, useful signal on their own.
+    // "success" is deliberately absent here: it only means the API call
+    // returned cleanly, not that the failure is understood or fixed, and
+    // showing it as a green "SUCCESS" badge implied the latter.
+    var statusColors = { timeout: "#f5a623", error: "#e05a4e", crash: "#e05a4e" };
+    // Real fix_status badge (see yocto_triage_listener.py _signature_set_fix_status)
+    // - this is what the entry actually means, not just whether the API call succeeded.
+    var fixStatusColors = { pending: "#f5a623", accepted: "#a8cc3a", rejected: "#e05a4e", unknown: "#9fb3c8" };
+    var neutralColor = "#6b7c8f";
+
+    function renderFeed(list, signatures) {
+      var container = document.getElementById("triageList");
+      if (list.length === 0) {
+        container.innerHTML = '<p class="empty-hint">No triage events yet.</p>';
+        return;
+      }
+      container.innerHTML = list.map(function (e) {
+        var sigRecord = e.signature ? (signatures || {})[e.signature] : null;
+        var label, color, matchNote = "";
+        if (e.status === "deterministic") {
+          // Matched known-failures.json directly (Step 1/2, no claude call).
+          // Entries only get INTO that catalog after a human already
+          // confirmed the fix once - so this is accepted by definition,
+          // no signature lookup needed.
+          label = "confirmed";
+          color = fixStatusColors.accepted;
+          if (e.matched_entry) matchNote = ' <span class="list-card-date">&middot; catalog: ' + escapeHtml(e.matched_entry) + '</span>';
+        } else if (sigRecord) {
+          label = sigRecord.fix_status || "unknown";
+          color = fixStatusColors[label] || fixStatusColors.unknown;
+        } else if (statusColors[e.status]) {
+          // A genuine call failure is real signal even without a signature.
+          label = e.status;
+          color = statusColors[e.status];
+        } else {
+          // No signature to look up a real fix_status, and the call itself
+          // didn't fail - "not tracked" says exactly that, instead of
+          // reusing "success" in a way that reads as "problem resolved".
+          label = "not tracked";
+          color = neutralColor;
+        }
+        var jenkins = e.jenkins_text ? escapeHtml(e.jenkins_text) : "(no Jenkins message captured)";
+        return '<div class="list-card">' +
+          '<div class="list-card-header">' +
+            '<span class="status-badge" style="background:' + color + '22; color:' + color +
+              '; border-color:' + color + '">' + escapeHtml(label) + '</span>' + matchNote +
+            '<span class="list-card-date">' + e.date + ' ' + e.time + ' &middot; ' + escapeHtml(e.id) + '</span>' +
+            '<span class="list-card-cost">$' + e.cost_usd.toFixed(2) + '</span>' +
+          '</div>' +
+          '<div class="list-card-body">' + jenkins + '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    function refreshFeed() {
+      Promise.all([
+        fetch("triage_feed.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return []; }),
+        fetch("failure_signatures.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      ]).then(function (results) {
+        renderFeed(results[0], results[1]);
+      });
+    }
+    refreshFeed();
+    setInterval(refreshFeed, 5000);
+
+    // --- Aba: Known Failures --------------------------------------------
+    var allKnownFailures = [];
+
+    function renderKnownFailures(list) {
+      var container = document.getElementById("failureList");
+      if (list.length === 0) {
+        container.innerHTML = '<p class="empty-hint">No known failures match.</p>';
+        return;
+      }
+      container.innerHTML = list.map(function (f) {
+        return '<div class="list-card">' +
+          '<div class="list-card-header"><strong>' + escapeHtml(f.title || f.id) + '</strong></div>' +
+          '<div class="list-card-body">' +
+            '<div><span class="field-label">Affected:</span> ' + escapeHtml(f.affected || "-") + '</div>' +
+            '<div><span class="field-label">Root cause:</span> ' + escapeHtml(f.root_cause || "-") + '</div>' +
+            '<div><span class="field-label">Fix:</span> ' + escapeHtml(f.fix || "-") + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    document.getElementById("failureSearch").addEventListener("input", function (ev) {
+      var q = ev.target.value.toLowerCase();
+      var filtered = allKnownFailures.filter(function (f) {
+        var haystack = [f.title, f.affected, (f.keywords || []).join(" ")].join(" ").toLowerCase();
+        return haystack.indexOf(q) !== -1;
+      });
+      renderKnownFailures(filtered);
+    });
+
+    function refreshKnownFailures() {
+      fetch("known_failures.json?t=" + Date.now())
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          allKnownFailures = data.entries || [];
+          renderKnownFailures(allKnownFailures);
+        })
+        .catch(function () {});
+    }
+    refreshKnownFailures();
+    setInterval(refreshKnownFailures, 30000);
+
+    // --- Aba: Linked Tickets ---------------------------------------------
+    function renderLinkedTickets(list) {
+      var container = document.getElementById("ticketList");
+      if (list.length === 0) {
+        container.innerHTML = '<p class="empty-hint">No linked tickets yet.</p>';
+        return;
+      }
+      container.innerHTML = list.map(function (t) {
+        return '<div class="list-card">' +
+          '<div class="list-card-header">' +
+            '<a href="' + escapeHtml(t.ticket_url) + '" target="_blank" rel="noopener" class="ticket-link">' +
+              escapeHtml(t.ticket) + '</a>' +
+            '<span class="list-card-date">' + escapeHtml((t.linked_at || "").substring(0, 10)) + '</span>' +
+          '</div>' +
+          '<div class="list-card-body">' + escapeHtml(t.source_jenkins_text || "") + '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    // A ticket linked to a failure-signature entry (see
+    // _signature_set_ticket_url in the bot) has no separate short ticket
+    // id field, only the full URL - derive one (e.g. "TOR-4543") the same
+    // way the bot's own ticket: command parser matches one out of a
+    // pasted Jira link, falling back to the raw URL if that fails.
+    function deriveTicketLabel(url) {
+      var m = /([A-Za-z][A-Za-z0-9]+-\d+)/.exec(url || "");
+      return m ? m[1] : (url || "");
+    }
+
+    function signatureTicketsToEntries(data) {
+      return Object.keys(data || {})
+        .map(function (sig) { return data[sig]; })
+        .filter(function (rec) { return rec.ticket_url; })
+        .map(function (rec) {
+          var affected = rec.recipe + ":" + rec.task +
+            (rec.machines && rec.machines.length ? " (" + rec.machines.join(", ") + ")" : "");
+          return {
+            ticket: deriveTicketLabel(rec.ticket_url),
+            ticket_url: rec.ticket_url,
+            linked_at: rec.ticket_linked_at,
+            source_jenkins_text: affected,
+          };
+        });
+    }
+
+    function refreshLinkedTickets() {
+      Promise.all([
+        fetch("linked_tickets.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return { entries: [] }; }),
+        fetch("failure_signatures.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      ]).then(function (results) {
+        var fromCatalog = results[0].entries || [];
+        var fromSignatures = signatureTicketsToEntries(results[1]);
+        var merged = fromCatalog.concat(fromSignatures);
+        merged.sort(function (a, b) { return (b.linked_at || "").localeCompare(a.linked_at || ""); });
+        renderLinkedTickets(merged);
+      });
+    }
+    refreshLinkedTickets();
+    setInterval(refreshLinkedTickets, 30000);
+  </script>
+</body>
+</html>
+)HTML";
+}
+
+int main(int argc, char *argv[])
+{
+    QGuiApplication app(argc, argv);
+
+    const QString reportsDir = qEnvironmentVariable("COST_REPORTS_DIR", "cost-reports");
+    const QString referencesDir = qEnvironmentVariable("REFERENCES_DIR", "references");
+    // failure_signatures.json lives in the bot's state volume, not its
+    // git-backed references/ dir - a separate source dir/watcher.
+    const QString stateDir = qEnvironmentVariable("STATE_DIR", "state");
+    const QString outputDir = qEnvironmentVariable("OUTPUT_DIR", "output");
+    QDir().mkpath(outputDir);
+
+    CostDataSource costSource(reportsDir);
+    TriageFeedSource feedSource(reportsDir);
+    ReferenceCatalogSource refSource(referencesDir, outputDir, {
+        {QStringLiteral("known-failures.json"), QStringLiteral("known_failures.json")},
+        {QStringLiteral("linked-tickets.json"), QStringLiteral("linked_tickets.json")},
+    });
+    ReferenceCatalogSource signaturesSource(stateDir, outputDir, {
+        {QStringLiteral("failure_signatures.json"), QStringLiteral("failure_signatures.json")},
+    });
+
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("costSource", &costSource);
+
+    QQmlComponent component(&engine, QUrl("qrc:/SherlogCostVideo/QML/CostChart.qml"));
+    if (component.status() != QQmlComponent::Ready) {
+        qWarning() << "Falha ao carregar CostChart.qml:" << component.errorString();
+        return -1;
+    }
+
+    QObject *rootObject = component.create();
+    auto *rootItem = qobject_cast<QQuickItem *>(rootObject);
+    if (!rootItem) {
+        qWarning() << "CostChart.qml não produziu um Item";
+        return -1;
+    }
+
+    QQuickWindow window;
+    window.setTitle(QStringLiteral("Sherlog Cost Dashboard"));
+    window.resize(1280, 720);
+    rootItem->setParentItem(window.contentItem());
+    rootItem->setSize(QSizeF(1280, 720));
+    window.show();
+
+    {
+        QFile indexFile(outputDir + "/index.html");
+        if (indexFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            indexFile.write(kIndexHtml);
+    }
+
+    const QString dashboardPath = outputDir + "/dashboard.png";
+    auto captureScreenshot = [&window, dashboardPath]() {
+        const QImage frame = window.grabWindow();
+        frame.save(dashboardPath);
+        qInfo() << "Screenshot atualizado em" << dashboardPath;
+    };
+
+    const QString jsonPath = outputDir + "/cost_data.json";
+    auto exportJson = [&costSource, jsonPath]() {
+        QJsonArray arr;
+        for (const QVariant &v : costSource.costData()) {
+            const QVariantMap m = v.toMap();
+            QJsonObject obj;
+            obj[QStringLiteral("date")] = m.value(QStringLiteral("date")).toString();
+            obj[QStringLiteral("cost_usd")] = m.value(QStringLiteral("cost_usd")).toDouble();
+            obj[QStringLiteral("analysis_count")] =
+                m.value(QStringLiteral("analysis_count")).toInt();
+            arr.append(obj);
+        }
+        QFile f(jsonPath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            f.write(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    };
+
+    // Espera um pouco depois de cada mudança de dado pro Canvas terminar de
+    // redesenhar antes de tirar o print.
+    QObject::connect(&costSource, &CostDataSource::costDataChanged, &app,
+                      [captureScreenshot, exportJson]() {
+        exportJson();
+        QTimer::singleShot(150, captureScreenshot);
+    });
+    exportJson();
+    QTimer::singleShot(300, captureScreenshot);
+
+    const QString feedJsonPath = outputDir + "/triage_feed.json";
+    auto exportFeedJson = [&feedSource, feedJsonPath]() {
+        QFile f(feedJsonPath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            f.write(QJsonDocument::fromVariant(feedSource.feed()).toJson(QJsonDocument::Compact));
+    };
+    QObject::connect(&feedSource, &TriageFeedSource::feedChanged, &app, exportFeedJson);
+    exportFeedJson();
+
+    return app.exec();
+}

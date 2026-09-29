@@ -1,0 +1,38 @@
+{
+  "entries": [
+    {
+      "id": "tor-4492-error-workdir-oe-sources-meta-freescale",
+      "ticket": "TOR-4492",
+      "ticket_url": "https://toradex.atlassian.net/browse/TOR-4492",
+      "keywords": [
+        "ERROR: /workdir/oe/sources/meta-freescale/recipes-bsp/firmware-imx/firmware-nxp-wifi_1.1.bb: Substring appears 3 times"
+      ],
+      "linked_by": "U0A82HS0AP7",
+      "linked_at": "2026-09-11T00:57:08Z",
+      "source_jenkins_text": "Image Common-torizon-nxp Scarthgap-7.x.y Ext Integration Matrix - #18 Still Failing after 3 min 55 sec and counting (<https://jenkins.int.toradex.com/job/image-common-torizon-nxp-scarthgap-7.x.y-extint-matrix/18/display/redirect|Open>)"
+    },
+    {
+      "id": "tor-4543-tcb-signing-files-1-0-r0-temp-log-do-com",
+      "ticket": "TOR-4543",
+      "ticket_url": "https://toradex.atlassian.net/browse/TOR-4543",
+      "keywords": [
+        "tcb-signing-files-1.0-r0/temp/log.do_compile",
+        "tcb-signing-files-1.0-r0 do_compile: ExecutionError('/workdir/oe/tmp/work/verdin_am62-tdx-linux/tcb-signing-files/1.0/temp/run.do_compile.290041', 1, None, None)"
+      ],
+      "linked_by": "U0A82HS0AP7",
+      "linked_at": "2026-09-18T15:58:14Z",
+      "source_jenkins_text": "Image Torizoncore Scarthgap-7.x.y Nightly Matrix - #535 Still Failing after 23 hr and counting (<https://jenkins.int.toradex.com/job/image-torizoncore-scarthgap-7.x.y-nightly-matrix/535/display/redirect|Open>)"
+    },
+    {
+      "id": "tor-8888-script-returned-exit-code-1",
+      "ticket": "TOR-8888",
+      "ticket_url": null,
+      "keywords": [
+        "script returned exit code 1"
+      ],
+      "linked_by": "U0A82HS0AP7",
+      "linked_at": "2026-09-25T14:48:15Z",
+      "source_jenkins_text": "Image Common-torizon-ti Scarthgap-7.x.y Nightly Matrix - #424 Failure after 3 min 0 sec and counting (<https://jenkins.int.toradex.com/job/image-common-torizon-ti-scarthgap-7.x.y-nightly-matrix/424/display/redirect|Open>)"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "09f94740ba10636f": {
+    "error_line": "HTTP Basic: Access denied. ... was either incorrect, expired, or improperly scoped.",
+    "first_channel": "C0BKJ34PAT0",
+    "first_seen": 1789869279,
+    "first_ts": "1789869279.556899",
+    "fix_confirmed_at": 1790358045.5134203,
+    "fix_status": "accepted",
+    "fix_suggestion": "Rotate/renew the GitLab Personal Access Token (PAT) used for repo-init against toradex/rd/linux-bsp/toradex-manifest.git - update the Jenkins credential entry (GLAB_TESTING_GROUP_TOKEN / JENKINS_GITLAB_READ_TOKEN), confirm read_repository scope, re-trigger the pipeline.",
+    "last_event_id": "backfill-2026-09-22",
+    "last_seen": 1790082242,
+    "machines": [],
+    "occurrences": 9,
+    "recipe": "repo-init",
+    "task": "manifest_auth",
+    "ticket_url": null
+  },
+  "359cd5018627f3dc": {
+    "error_line": "ERROR: tcb-signing-files-#.#-r0 do_compile: ExecutionError('#', #, None, None)",
+    "first_seen": 1789690218.3873246,
+    "fix_confirmed_at": 1790358045.5134165,
+    "fix_status": "accepted",
+    "fix_suggestion": "",
+    "last_event_id": "Ev0C33594QQ2",
+    "last_seen": 1789842070.1928864,
+    "machines": [
+      "verdin-am62"
+    ],
+    "occurrences": 2,
+    "recipe": "tcb-signing-files",
+    "task": "do_compile",
+    "ticket_url": "https://toradex.atlassian.net/browse/TOR-4543"
+  },
+  "a7e5f1709f82d379": {
+    "recipe": "generic",
+    "task": "unclassified",
+    "error_line": "(no recognizable bitbake error markers found; showing last # lines instead)",
+    "first_seen": 1790437767.995949,
+    "last_seen": 1790520674.1725473,
+    "occurrences": 2,
+    "machines": [
+      "beagley-ai",
+      "apalis-imx8"
+    ],
+    "fix_suggestion": "Regenerate/rebase `CVE-2026-31431.patch` against the current `linux-bb.org` 6.12.57+git source in `meta-ti/meta-beagle`, or drop the patch if the CVE fix is already present upstream in that kernel tree (check `git log` on the affected crypto files). This is a third-party layer defect \u2014 escalate/patch upstream there, or apply a temporary `meta-toradex-torizon` bbappend dropping the broken patch for machine `beagley-ai` only, pending upstream resolution.",
+    "fix_status": "pending",
+    "last_event_id": "Ev0C4LSQAFNF",
+    "fix_confirmed_at": null,
+    "ticket_url": null,
+    "first_channel": "C0BKJ34PAT0",
+    "first_ts": "1790437767.898679"
+  }
+}

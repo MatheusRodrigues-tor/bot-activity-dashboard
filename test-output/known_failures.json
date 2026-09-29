@@ -1,0 +1,193 @@
+{
+  "entries": [
+    {
+      "id": "bbappend-mismatch-uboot-version-json",
+      "title": "u-boot-version.json missing from deploy directory",
+      "recipe_hint": "u-boot-toradex-imx",
+      "keywords": ["u-boot-version.json"],
+      "affected": "Apalis iMX8, u-boot-toradex-imx recipe",
+      "root_cause": "A bbappend intended to target u-boot-toradex-imx was named u-boot-imx_%.bbappend, which doesn't match the real recipe name, so the append silently never applied.",
+      "fix": "Rename the bbappend file to match the actual recipe name (u-boot-toradex-imx_%.bbappend). Verify with bitbake-layers show-appends."
+    },
+    {
+      "id": "linux-minor-parse-error",
+      "title": "LINUX_MINOR parse error",
+      "recipe_hint": "meta-virtualization",
+      "keywords": ["LINUX_MINOR", "mainline"],
+      "affected": "Jetson platforms via meta-virtualization, when LINUX_VERSION = \"mainline\"",
+      "root_cause": "Downstream code in meta-virtualization assumes LINUX_VERSION always contains a major.minor dotted format.",
+      "fix": "Patch meta-virtualization to handle a non-dotted LINUX_VERSION value gracefully."
+    },
+    {
+      "id": "repo-sync-rebase-conflict",
+      "title": "repo sync rebase conflicts on meta-toradex-torizon",
+      "recipe_hint": null,
+      "keywords": ["repo sync", "rebase", "detached HEAD"],
+      "affected": "Any BSP using the standard Toradex manifest workflow",
+      "root_cause": "Local branch history diverged from the new manifest revision in a way repo can't cleanly rebase.",
+      "fix": "git checkout --detach on the affected project, then repo sync <project> to recreate the tracking branch."
+    },
+    {
+      "id": "kconfig-fragment-silent-fail",
+      "title": "Kconfig fragment silently not applied",
+      "recipe_hint": "linux-syna",
+      "keywords": ["CONFIG_CRYPTO", "CONFIG_XFRM", "CONFIG_INET_ESP"],
+      "affected": "Any kernel recipe using SRC_URI config fragments (seen on Synaptics SL1680 / linux-syna)",
+      "root_cause": "Spaces around '=' in the fragment (CONFIG_FOO = y instead of CONFIG_FOO=y) — Kconfig silently ignores malformed lines.",
+      "fix": "Fragment lines must be exactly CONFIG_FOO=y/=m with no surrounding whitespace. Verify with bitbake -c savedefconfig."
+    },
+    {
+      "id": "cargo-rac-patch-race",
+      "title": "cargo_add_rac_patch_paths / Cargo config race",
+      "recipe_hint": "rac",
+      "keywords": ["cargo_add_rac_patch_paths", "cargo_common_do_patch_paths", "CARGO_HOME"],
+      "affected": "rac recipe (Rust/Cargo-based)",
+      "root_cause": "Custom cargo_add_rac_patch_paths postfunc racing with upstream cargo_common_do_patch_paths postfunc, both mutating the same Cargo config file.",
+      "fix": "Move custom logic into do_compile:prepend via bbappend instead of chaining as a postfunc."
+    },
+    {
+      "id": "edk2-firmware-tegra-patch-rot",
+      "title": "edk2-firmware-tegra \"different line endings\" patch error",
+      "recipe_hint": "edk2-firmware-tegra",
+      "keywords": ["line endings", "edk2-nvidia", "edk2-firmware-tegra"],
+      "affected": "Jetson platforms, edk2-firmware-tegra recipe",
+      "root_cause": "Patch rot — generated against the wrong SRCREV and drifted; the 'line endings' message is a red herring from quilt's fuzzy match failing.",
+      "fix": "Regenerate the patch against the correct edk2-nvidia SRCREV, preserving per-file line-ending convention."
+    },
+    {
+      "id": "aktualizr-torizon-native-libsystemd",
+      "title": "aktualizr-torizon-native CMake fails to find libsystemd",
+      "recipe_hint": "aktualizr-torizon-native",
+      "keywords": ["libsystemd", "aktualizr-torizon-native"],
+      "affected": "aktualizr-torizon-native",
+      "root_cause": "The native sysroot doesn't have libsystemd built for it by default, and the native build doesn't need systemd integration.",
+      "fix": "Add -DBUILD_SYSTEMD=OFF via EXTRA_OECMAKE:class-native in the bbappend."
+    },
+    {
+      "id": "fw-printenv-beagley-ai",
+      "title": "fw_printenv rollback check fails on BeagleY-AI (TI J722S)",
+      "recipe_hint": null,
+      "keywords": ["fw_printenv", "uboot.env", "fw_env.config"],
+      "affected": "BeagleY-AI (TI J722S)",
+      "root_cause": "fw_printenv reading before the boot partition was mounted, and/or fw_env.config pointed at a stale offset.",
+      "fix": "Point fw_env.config at the correct raw device/offset derived from the FAT cluster location of uboot.env (filefrag)."
+    },
+    {
+      "id": "initramfs-kmod-rdepends-missing-kernel-module-qa",
+      "title": "initramfs-module-kmod do_package_qa build-deps failure when a splash-screen kernel module isn't actually built by the kernel recipe",
+      "recipe_hint": "initramfs-framework",
+      "keywords": ["initramfs-module-kmod rdepends on", "build-deps", "kernel-module-sii902x", "get_initramfs_kmods"],
+      "affected": "meta-toradex-torizon recipes-core/initramfs-framework (initramfs-graphics.inc, INITRAMFS_EXTRA_KMODS); confirmed on verdin-am62 (kernel-module-sii902x) after the linux-toradex-ti 6.6->6.18 bump; verdin-am62p/aquila-am69 share the identical kernel-cache config chain and are suspected but unconfirmed",
+      "root_cause": "INITRAMFS_EXTRA_KMODS (initramfs-graphics.inc) is turned into a hard RDEPENDS:initramfs-module-kmod via get_initramfs_kmods(). If the target kernel recipe's final .config doesn't actually enable that module (e.g. CONFIG_DRM_SII902X unset for verdin-am62/linux-toradex-ti after the TI kernel bump, since the SII902X chip has no devicetree node on this hardware), the kernel-module-<x> package never gets produced/packaged, so no pkgdata exists for it anywhere; insane.bbclass's build-deps QA check then fails with the bare 'isn't a build dependency?' message.",
+      "fix": "Change RDEPENDS:initramfs-module-kmod (built from get_initramfs_kmods(d)) to RRECOMMENDS instead of RDEPENDS in the initramfs-framework bbappend, matching the existing RRECOMMENDS pattern already used for cfs-support kmods (kernel-module-erofs/overlay) in the same file. Safe because the kmod module already tolerates absent modules at runtime (modprobe exit code isn't checked)."
+    },
+    {
+      "id": "kernel-metadata-missing-kernel-cache-scc-for-kmeta-recipe",
+      "title": "do_kernel_metadata can't find meta-virtualization's official kernel-cache .scc fragments for a recipe that has its own kmeta",
+      "recipe_hint": "linux-toradex-ti",
+      "keywords": ["could not find file cfg/", "KERNEL_CACHE_FEATURES", "do_kernel_metadata", "torizon-kernel-meta"],
+      "affected": "linux-toradex-ti (TI-SoC kernels built via Toradex's own kernel-cache, torizon-kernel-meta)",
+      "root_cause": "torizon-kernel-meta only carries cfg/virtio.scc, and none of the other fragments meta-virtualization's KERNEL_CACHE_FEATURES requests exist anywhere else in the recipe's kmeta search path. Confirmed empirically: with no fix applied, 'bitbake linux-toradex-ti -c kernel_metadata' fails with 'ERROR: Feature cfg/xt-checksum.scc not found, this will cause configuration failures.' Two independent fixes were tested against this exact baseline and BOTH make it succeed - they are not competing alternatives with only one correct answer, do not assume a static read of upstream commits (e.g. meta-virtualization's c2eeba33) predicts which one 'wins' without testing.",
+      "fix": "Ported forward the existing TOR-4190 fix (Eduardo Ferreira, 2026-02-19, walnascar branch): a generic do_kernel_metadata:prepend in dynamic-layers/meta-virtualization/recipes-kernel/linux/linux-%.bbappend adding '-I${WORKDIR}/recipe-sysroot-native/kcfg' to the search path (plus the matching virtualization-layer: BBFILES_DYNAMIC entry in conf/layer.conf). Chosen over the alternative (adding the official yocto-kernel-cache as an extra type=kmeta SRC_URI source scoped to just linux-toradex-ti, also confirmed working) because it's generic across any kernel-cache recipe instead of being scoped to one."
+    },
+    {
+      "id": "wic-wks-canned-wks-path-too-deep",
+      "title": "wic: No kickstart files from WKS_FILES were found, after the files/wic migration",
+      "recipe_hint": null,
+      "keywords": ["No kickstart files from WKS_FILES were found", "canned-wks", "WKS_FULL_PATH"],
+      "affected": "meta-toradex-torizon, any machine using a WKS_FILE:sota:<machine> override; confirmed on beagley-ai / torizon-am62xx-sota.wks. Introduced by commit bbe46128 (2026-05-06).",
+      "root_cause": "oe-core's WKS_SEARCH_PATH (image_types_wic.bbclass) only looks one level deep: <layer>/files/wic/*.wks, flat, matching oe-core's own meta/files/wic layout. Commit bbe46128 ('wic: move wic files to new standard path') moved Torizon's .wks files from scripts/lib/wic/canned-wks/ to files/wic/canned-wks/ - correct prefix, but it kept the old canned-wks subdirectory, leaving the files one level too deep for WKS_SEARCH_PATH to ever find.",
+      "fix": "Flatten the directory: git mv files/wic/canned-wks/*.wks files/wic/ (drop the canned-wks subdirectory) in meta-toradex-torizon. Verify with bitbake -e <image> | grep ^WKS_FULL_PATH=."
+    },
+    {
+      "id": "wic-plugins-source-files-wic-not-scanned",
+      "title": "wic source plugins placed under files/wic/plugins are silently never loaded",
+      "recipe_hint": null,
+      "keywords": ["SCRIPTS_PLUGIN_DIR", "bootimg-sota-efi", "bootimg-efi-tmp", "loading plugin module"],
+      "affected": "meta-toradex-torizon, files/wic/plugins/source/*.py. Same root commit as wic-wks-canned-wks-path-too-deep (bbe46128, 2026-05-06) - silently broken since that date.",
+      "root_cause": "wic's plugin scanner (wic/pluginbase.py PluginMgr.get_plugins()) hardcodes SCRIPTS_PLUGIN_DIR = [\"scripts/lib/wic/plugins\", \"lib/wic/plugins\"] and has no knowledge of the newer files/wic convention (that only applies to WKS_SEARCH_PATH, a separate bitbake-class mechanism, not to plugin discovery). The same commit that correctly migrated .wks files to files/wic/canned-wks/ also moved the plugin .py files there, taking them out of every path wic actually scans.",
+      "fix": "git mv files/wic/plugins/source/*.py scripts/lib/wic/plugins/source/ in meta-toradex-torizon (create the directory if needed). Verify the plugin filename appears in the 'DEBUG: loading plugin module' log lines."
+    },
+    {
+      "id": "weston-15-bbappend-dangling-after-16-bump",
+      "title": "weston_15.0.%.bbappend dangling-append fatal parse error after oe-core bumps weston to 16.0.0",
+      "recipe_hint": "weston",
+      "keywords": ["No recipes in default available for", "weston_15.0.%.bbappend", "weston: upgrade 15.0.1"],
+      "affected": "Any build with meta-ti-bsp in BBLAYERS, after oe-core commit ad85da159d4 ('weston: upgrade 15.0.1 -> 16.0.0', 2026-08-10). Confirmed on beagley-ai / torizon-docker (common-torizon), even though weston is never actually built there (wayland removed from DISTRO_FEATURES).",
+      "root_cause": "meta-ti/meta-ti-bsp's weston_15.0.%.bbappend (unchanged since 2026-05-04) targets the pre-bump version glob. After oe-core renamed the recipe to weston_16.0.0.bb, the glob matches nothing at all. Per bitbake's own source (bb/cooker.py:show_appends_with_no_recipes), the dangling-bbappend integrity check considers both buildable AND skipped recipes as valid matches and runs unconditionally at parse time for every bbappend in BBLAYERS - so weston being unbuildable under this DISTRO does not protect the build; only an actual filename match does.",
+      "fix": "Temporary fix contained entirely in meta-toradex-torizon (does not touch the third-party meta-ti layer): mask the stale bbappend in conf/distro/include/common-torizon.inc: BBMASK += \" /meta-ti-bsp/recipes-graphics/wayland/weston_15\\.0\\.%\\.bbappend \". Sufficient because weston is never built under Torizon anyway. Deliberately did not port the two TI GL-renderer patches the old bbappend pulled in - unverified against weston 16.0.0's renderer internals (major version bump touching the same files) and irrelevant to any Torizon image. Remove once meta-ti ships its own weston_16.0.%.bbappend (or newer)."
+    },
+    {
+      "id": "meta-updater-bootimg-sota-efi-oe-path-modulenotfound",
+      "title": "meta-updater's bootimg_sota_efi.py wic plugin: ModuleNotFoundError: No module named 'oe'",
+      "recipe_hint": null,
+      "keywords": ["bootimg_sota_efi.py", "from oe.path import copyhardlinktree", "ModuleNotFoundError: No module named 'oe'"],
+      "affected": "Any build with meta-updater in BBLAYERS once oe-core's pinned wic recipe reaches wic_0.3.1.bb (SRCREV 6c66da65bf2aac618092811c13792dcbd453d140) or any revision on/after commit bc0a8d88f6cd72eaa58ff906634e8d8f8d08d82a in the standalone git.yoctoproject.org/wic repo. Confirmed on beagley-ai / torizon-docker (common-torizon). Fires even when the active .wks doesn't reference this plugin's --source name, because wic's plugin scanner imports every discovered plugin file unconditionally before picking which one to use.",
+      "root_cause": "wic was extracted out of oe-core into its own standalone pip-packaged repo (git.yoctoproject.org/wic, python_hatchling) and now vendors its own copy of the oe/bb helper functions it needs instead of relying on oe-core/meta/lib being on PYTHONPATH. Commit bc0a8d88f6cd72eaa58ff906634e8d8f8d08d82a ('src: rename top-level bb imports to avoid oe-core/bitbake collision', Hongxu Jia, 2026-04-28) renamed that vendored copy from oe/bb to wic.oe/wic.bb specifically to stop wic's own bundled oe module from shadowing oe-core's real oe package when both are on PYTHONPATH at once (it was breaking bitbake itself with AttributeError: module 'oe' has no attribute 'buildcfg'). meta-updater's bootimg_sota_efi.py (Foundries.io, 2025) still does the pre-rename 'from oe.path import copyhardlinktree' and was never updated for the new namespace. No GitHub PR exists for the upstream change - git.yoctoproject.org/wic takes patches by email via b4/yocto-patches@lists.yoctoproject.org, not GitHub PRs.",
+      "fix": "In the local meta-updater checkout, scripts/lib/wic/plugins/source/bootimg_sota_efi.py: change 'from oe.path import copyhardlinktree' to 'from wic.oe.path import copyhardlinktree', matching the import style already used by wic's own working plugins (direct.py, rootfs.py) in the same installed package. This is a fix carried locally against the meta-updater checkout - needs to be reported/patched upstream to Foundries.io to survive a repo sync."
+    },
+    {
+      "id": "firmware-nxp-wifi-packages-substring-count-3",
+      "title": "firmware-nxp-wifi bb.fatal 'Substring appears 3 times' on imx93frdm due to hardcoded count==2 dedup workaround",
+      "recipe_hint": "firmware-nxp-wifi",
+      "keywords": ["Substring appears", "nxpiw610-sdio", "firmware-nxp-wifi_%.bbappend", "imx93frdm"],
+      "affected": "imx93frdm (Common Torizon), any build where both meta-imx/meta-imx-bsp and meta-imx-frdm/meta-imx-bsp are active in BBLAYERS at once.",
+      "root_cause": "A Toradex dedup workaround in dynamic-layers/meta-imx-frdm/recipes-bsp/firmware-imx/firmware-nxp-wifi_%.bbappend (TOR-4074, 2025-11-19) hardcoded count == 2 and bb.fatal's on anything else, assuming only two sources contribute '${PN}-nxpiw610-sdio' to PACKAGES. There are actually three: the base recipe (meta-freescale/recipes-bsp/firmware-imx/firmware-nxp-wifi_1.1.bb), meta-imx/meta-imx-bsp's own bbappend, and meta-imx-frdm/meta-imx-bsp's own bbappend. Both meta-imx and meta-imx-frdm end up in bblayers.conf simultaneously because imx-frdm-setup.sh sources imx-setup-release.sh (which unconditionally hooks in meta-imx/meta-imx-bsp for every MACHINE) and then layers meta-imx-frdm/meta-imx-bsp on top, with no BBMASK excluding either. Wrong assumption from the moment imx93frdm support landed, not a new upstream regression.",
+      "fix": "Rewrite the dedup python() in that bbappend to strip all-but-one occurrence generically (split PACKAGES, keep the first match, drop the rest) instead of hardcoding count == 2 with a bb.fatal on any other count."
+    },
+    {
+      "id": "docker-moby-throttledevice-patch-already-upstream",
+      "title": "docker-moby do_patch fails on 0002-opts-fix-ThrottledeviceOpt-GetList-returning-an-empty.patch, 'can be reverse-applied'",
+      "recipe_hint": "docker-moby",
+      "keywords": ["ThrottledeviceOpt", "throttledevice.go", "can be reverse-applied", "docker-moby"],
+      "affected": "docker-moby (any machine via meta-virtualization) once its vendored docker/cli reaches v25.0.7 / v27.1.2 or later. Confirmed on docker-moby-25.0.9+git... (imx93frdm, Common Torizon).",
+      "root_cause": "Toradex's own patch (meta-toradex-torizon/recipes-containers/docker/docker-moby/0002-opts-fix-ThrottledeviceOpt-GetList-returning-an-empty.patch) backports docker/cli upstream commit 73e78a58 ('run: fix GetList return empty issue for throttledevice'), which was later merged upstream into docker/cli v25.0.7 and v27.1.2. The patch header itself says to drop it once meta-virtualization's docker/cli reaches that version. Once the vendored cli source already contains the fix, do_patch fails instead of silently no-oping - 'can be reverse-applied' is quilt reporting the change is already present.",
+      "fix": "Drop the patch: remove file://0002-opts-fix-ThrottledeviceOpt-GetList-returning-an-empty.patch from docker-moby_git.bbappend's SRC_URI:append and delete the patch file. No functional loss - the fix it carried is already in the vendored docker/cli source."
+    },
+    {
+      "id": "firmware-ele-imx-mx93-secoext-empty-install-dir",
+      "title": "firmware-ele-imx do_install: 'install: omitting directory' on mx93",
+      "recipe_hint": "firmware-ele-imx",
+      "keywords": ["install: omitting directory", "firmware-ele-imx", "SECOEXT_FIRMWARE_NAME"],
+      "affected": "firmware-ele-imx_1.3.0.bb (meta-imx/meta-imx-bsp or meta-imx-frdm/meta-imx-bsp, identical do_install in both) on mx93 family machines. Confirmed on imx93frdm (Common Torizon).",
+      "root_cause": "do_install guards the optional extended SECO firmware install with 'if [ -e ${S}/${SECOEXT_FIRMWARE_NAME} ]'. SECOEXT_FIRMWARE_NAME (meta-freescale/conf/machine/include/imx-base.inc) only has a value for mx8ulp-generic-bsp and mx95-generic-bsp; for mx93 it defaults to empty string. With it empty the guard collapses to '[ -e ${S}/ ]', true because ${S} itself is a directory that always exists, so the following 'install -m 0644 ${S}/ ...' fails trying to install a directory as a regular file.",
+      "fix": "Add a Toradex-local bbappend overriding do_install with a proper guard (also require the variable be non-empty) at meta-toradex-torizon/dynamic-layers/meta-imx-frdm/recipes-bsp/firmware-imx/firmware-ele-imx_%.bbappend: change 'if [ -e ${S}/${SECOEXT_FIRMWARE_NAME} ]' to 'if [ -n \"${SECOEXT_FIRMWARE_NAME}\" ] && [ -e ${S}/${SECOEXT_FIRMWARE_NAME} ]'."
+    },
+    {
+      "id": "device-tree-overlays-ti-upstream-distro-nothing-provides-virtual-dtb",
+      "title": "torizon-upstream/-rt distro breaks virtual/dtb on TI (k3/AM62) machines: no provider left after COMPATIBLE_MACHINE:upstream disables device-tree-overlays-ti",
+      "recipe_hint": "device-tree-overlays-ti",
+      "keywords": ["Nothing PROVIDES 'virtual/dtb'", "device-tree-overlays-ti PROVIDES virtual/dtb but was skipped", "incompatible with machine verdin-am62 (not in COMPATIBLE_MACHINE)", "PREFERRED_PROVIDER_virtual/dtb set to device-tree-overlays-ti, not device-tree-overlays-mainline"],
+      "affected": "MACHINE=verdin-am62, verdin-am62p, aquila-am69 (any TI/K3 Toradex SoM using toradex-som.inc + TDX_BSP_VARIANT tdx-ti-6_18), only when DISTRO=torizon-upstream or torizon-upstream-rt; layers meta-toradex-bsp/meta-toradex-ti + meta-torizon",
+      "root_cause": "Commit 6c5bc0ea (2025-12-15, meta-toradex-ti, Max Krummenacher) added COMPATIBLE_MACHINE:upstream = \"(^$)\" to device-tree-overlays-ti_git.bb to step aside for a mainline DTB provider, but keyed it off DISTROOVERRIDES's distro-wide 'upstream' flag (set unconditionally by torizon-upstream[-rt].conf) rather than the per-machine 'upstream' MACHINEOVERRIDES tag that only appears when TDX_BSP_VARIANT actually resolves to tdx-upstream-mainline. No TI machine conf sets TDX_BSP_VARIANT:upstream, so PREFERRED_PROVIDER_virtual/dtb stays pinned at the now-disabled device-tree-overlays-ti, leaving virtual/dtb with zero buildable providers.",
+      "fix": "In meta-toradex-bsp/meta-toradex-ti/recipes-kernel/linux/device-tree-overlays-ti_git.bb, replace 'COMPATIBLE_MACHINE = \"k3\"' / 'COMPATIBLE_MACHINE:upstream = \"(^$)\"' with 'COMPATIBLE_MACHINE = \"(^$)\"' / 'COMPATIBLE_MACHINE:downstream = \"k3\"' so compatibility is driven by the machine-level 'downstream' tag (set by tdx-ti-6_18.inc) instead of the distro-level 'upstream' flag. Applied directly in the local meta-toradex-ti checkout on 2026-08-24; confirm with an actual bitbake torizon-minimal build."
+    },
+    {
+      "id": "imx-default-bsp-upstream-distro-nothing-provides-virtual-kernel",
+      "title": "torizon-upstream/-rt distro breaks virtual/kernel on NXP i.MX machines: IMX_DEFAULT_BSP forced to mainline, disabling linux-toradex-imx",
+      "recipe_hint": "linux-toradex-imx",
+      "keywords": ["Nothing PROVIDES 'virtual/kernel'", "linux-toradex-imx PROVIDES virtual/kernel but was skipped", "incompatible with machine apalis-imx8 (not in COMPATIBLE_MACHINE)", "PREFERRED_PROVIDER_virtual/kernel set to linux-toradex-imx"],
+      "affected": "Any NXP i.MX Toradex machine using toradex-som.inc with the default downstream TDX_BSP_VARIANT (confirmed on apalis-imx8), only when DISTRO=torizon-upstream or torizon-upstream-rt; layer meta-torizon-bsp (conf/machine/include/bsp-machine-overrides.inc)",
+      "root_cause": "Same override-name collision as imx-default-bsp variant of the device-tree-overlays-ti bug (id device-tree-overlays-ti-upstream-distro-nothing-provides-virtual-dtb), in a different file. bsp-machine-overrides.inc set IMX_DEFAULT_BSP:upstream = \"mainline\" to switch NXP machines to the mainline BSP once they actually go upstream, but torizon-upstream[-rt].conf sets DISTROOVERRIDES .= \":upstream\" unconditionally for every machine, and that distro-level tag is indistinguishable from a genuine per-machine 'switched to mainline' tag once both land in the flat OVERRIDES list. Since no NXP machine defines a working upstream TDX_BSP_VARIANT, this silently forced IMX_DEFAULT_BSP to mainline for every machine under torizon-upstream, breaking the mx8-nxp-bsp/mx9-nxp-bsp MACHINEOVERRIDES tags that linux-toradex-imx's COMPATIBLE_MACHINE requires. Confirmed via git log -S that this predates torizon-upstream + apalis-imx8 ever being built together - not a recent regression, a latent gap first exercised now.",
+      "fix": "In meta-torizon-bsp/conf/machine/include/bsp-machine-overrides.inc, replace 'IMX_DEFAULT_BSP = \"nxp\"' / 'IMX_DEFAULT_BSP:upstream = \"mainline\"' with 'IMX_DEFAULT_BSP = \"mainline\"' / 'IMX_DEFAULT_BSP:downstream = \"nxp\"', since :downstream is only ever set by the machine side (tdx-nxp-*.inc), never by DISTROOVERRIDES, so it can't collide with the distro-level flag. Applied and committed in meta-torizon-bsp (commit 711ea753, 2026-08-24); verified with bitbake-getvar and a clean bitbake -n torizon-docker dry run for apalis-imx8."
+    },
+    {
+      "id": "edk2-firmware-tegra-nvidia-config-patch-rot",
+      "title": "edk2-firmware-tegra patch rot: hunk failures at NvidiaConfig files",
+      "recipe_hint": "edk2-firmware-tegra",
+      "keywords": ["hunks failed", "NvidiaConfigDxe.inf", "NvidiaConfigHii.h", "NvidiaConfigHiiMap.uni", "0001-Implement-support-for-the-Torizon-boot.patch"],
+      "affected": "Jetson platforms (Jetson Orin Nano / Jetson Orin Nano NVME), edk2-firmware-tegra recipe via 0001-Implement-support-for-the-Torizon-boot.patch",
+      "root_cause": "The 0001-Implement-support-for-the-Torizon-boot.patch was generated against an outdated edk2-nvidia SRCREV. Multiple hunks no longer apply cleanly because the patch has drifted significantly relative to the current edk2-nvidia source - the failing hunks at NvidiaConfig files are indicators of this drift reaching the point where quilt can no longer fuzzily match the patch context.",
+      "fix": "Regenerate the patch against the current edk2-nvidia SRCREV, preserving per-file line-ending convention (CRLF for C/header/DSC files, LF for .dts) - set core.autocrlf=false when regenerating, or normalize via a Python do_patch:prepend() in the bbappend."
+    },
+    {
+      "id": "initramfs-framework-udev-patch-rot",
+      "title": "initramfs-framework udev patch rot: 0002-only-scan-for-block-devices.patch fails to apply",
+      "recipe_hint": "initramfs-framework",
+      "keywords": ["0002-only-scan-for-block-devices.patch", "Hunk #1 FAILED at 45", "udev"],
+      "affected": "All TorizonOS image builds (initramfs-framework-1.0:do_patch), via meta-toradex-torizon/recipes-core/initramfs-framework/files/0002-only-scan-for-block-devices.patch. Affects all machines, distributions, and container recipes identically.",
+      "root_cause": "Patch rot — the patch 0002-only-scan-for-block-devices.patch was generated against an earlier version of the udev file in initramfs-framework. The udev file has since been modified, and the hunk context at line 45 no longer exists in the current version. The patch cannot apply because the @@ line/context markers don't match the current file state.",
+      "fix": "Rebase the patch against the current udev source in meta-toradex-torizon/recipes-core/initramfs-framework/. Either update the patch to reflect the new line numbering and context in udev, or verify whether the change the patch makes is still needed (the functionality may have already been applied upstream in a newer initramfs-framework release)."
+    }
+  ]
+}
