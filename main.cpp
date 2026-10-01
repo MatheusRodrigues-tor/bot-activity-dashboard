@@ -610,6 +610,15 @@ const char *kIndexHtml = R"HTML(<!doctype html>
     setInterval(refreshKnownFailures, 30000);
 
     // --- Aba: Linked Tickets ---------------------------------------------
+    // Colored off Jira's statusCategory ("new"/"indeterminate"/"done"), not
+    // the free-text status name - a workflow can rename "To Do" to "A
+    // fazer" or anything else per-project/language, but the category key
+    // is stable, so the badge color stays correct regardless. Only set for
+    // bot-created tickets (see sync_jira_ticket_status.py) - a ticket a
+    // human linked via linked-tickets.json has no status synced (yet), so
+    // it simply gets no badge, not a wrong/stale one.
+    var ticketStatusCategoryColors = { "new": "#9fb3c8", indeterminate: "#f5a623", done: "#a8cc3a" };
+
     function renderLinkedTickets(list) {
       var container = document.getElementById("ticketList");
       if (list.length === 0) {
@@ -617,10 +626,16 @@ const char *kIndexHtml = R"HTML(<!doctype html>
         return;
       }
       container.innerHTML = list.map(function (t) {
+        var statusBadge = "";
+        if (t.ticket_status) {
+          var color = ticketStatusCategoryColors[t.ticket_status_category] || neutralColor;
+          statusBadge = '<span class="status-badge" style="background:' + color + '22; color:' + color +
+            '; border-color:' + color + '">' + escapeHtml(t.ticket_status) + '</span>';
+        }
         return '<div class="list-card">' +
           '<div class="list-card-header">' +
             '<a href="' + escapeHtml(t.ticket_url) + '" target="_blank" rel="noopener" class="ticket-link">' +
-              escapeHtml(t.ticket) + '</a>' +
+              escapeHtml(t.ticket) + '</a>' + statusBadge +
             '<span class="list-card-date">' + escapeHtml((t.linked_at || "").substring(0, 10)) + '</span>' +
           '</div>' +
           '<div class="list-card-body">' + escapeHtml(t.source_jenkins_text || "") + '</div>' +
@@ -650,6 +665,8 @@ const char *kIndexHtml = R"HTML(<!doctype html>
             ticket_url: rec.ticket_url,
             linked_at: rec.ticket_linked_at,
             source_jenkins_text: affected,
+            ticket_status: rec.ticket_status,
+            ticket_status_category: rec.ticket_status_category,
           };
         });
     }
