@@ -26,6 +26,8 @@ private slots:
     void mirrorNow();
 
 private:
+    void watchIndividualFiles();
+
     QString m_sourceDir;
     QString m_outputDir;
     QHash<QString, QString> m_fileMap;
