@@ -144,6 +144,7 @@ const char *kIndexHtml = R"HTML(<!doctype html>
     .empty-hint { color: #9fb3c8; font-size: 13px; }
     .ticket-link { color: #29abe2; font-weight: 600; text-decoration: none; }
     .ticket-link:hover { text-decoration: underline; }
+    .ticket-assignee { color: #9fb3c8; font-size: 12px; }
     #failureSearch {
       width: 100%;
       box-sizing: border-box;
@@ -613,11 +614,20 @@ const char *kIndexHtml = R"HTML(<!doctype html>
     // Colored off Jira's statusCategory ("new"/"indeterminate"/"done"), not
     // the free-text status name - a workflow can rename "To Do" to "A
     // fazer" or anything else per-project/language, but the category key
-    // is stable, so the badge color stays correct regardless. Only set for
-    // bot-created tickets (see sync_jira_ticket_status.py) - a ticket a
-    // human linked via linked-tickets.json has no status synced (yet), so
-    // it simply gets no badge, not a wrong/stale one.
+    // is stable, so the badge color stays correct regardless. Bot-created
+    // tickets carry it in their failure_signatures.json record; tickets a
+    // human linked via linked-tickets.json get it from the bot's separate
+    // linked_ticket_status.json (keyed by ticket id, see
+    // sync_jira_ticket_status.py). A ticket with no synced status yet
+    // simply gets no badge, not a wrong/stale one; one Jira did not
+    // return gets a red badge with the sync's error text instead.
     var ticketStatusCategoryColors = { "new": "#9fb3c8", indeterminate: "#f5a623", done: "#a8cc3a" };
+    var ticketStatusErrorColor = statusColors.error;
+
+    function statusBadgeHtml(color, text) {
+      return '<span class="status-badge" style="background:' + color + '22; color:' + color +
+        '; border-color:' + color + '">' + escapeHtml(text) + '</span>';
+    }
 
     function renderLinkedTickets(list) {
       var container = document.getElementById("ticketList");
@@ -627,15 +637,24 @@ const char *kIndexHtml = R"HTML(<!doctype html>
       }
       container.innerHTML = list.map(function (t) {
         var statusBadge = "";
-        if (t.ticket_status) {
-          var color = ticketStatusCategoryColors[t.ticket_status_category] || neutralColor;
-          statusBadge = '<span class="status-badge" style="background:' + color + '22; color:' + color +
-            '; border-color:' + color + '">' + escapeHtml(t.ticket_status) + '</span>';
+        var assignee = "";
+        if (t.ticket_status_error) {
+          statusBadge = statusBadgeHtml(ticketStatusErrorColor, t.ticket_status_error);
+        } else if (t.ticket_status) {
+          statusBadge = statusBadgeHtml(
+            ticketStatusCategoryColors[t.ticket_status_category] || neutralColor, t.ticket_status);
+          // undefined = written before the sync tracked assignees, so say
+          // nothing rather than a misleading "Unassigned".
+          if (t.ticket_assignee !== undefined) {
+            assignee = '<span class="ticket-assignee">' +
+              (t.ticket_assignee ? "Assignee: " + escapeHtml(t.ticket_assignee) : "Unassigned") +
+              '</span>';
+          }
         }
         return '<div class="list-card">' +
           '<div class="list-card-header">' +
             '<a href="' + escapeHtml(t.ticket_url) + '" target="_blank" rel="noopener" class="ticket-link">' +
-              escapeHtml(t.ticket) + '</a>' + statusBadge +
+              escapeHtml(t.ticket) + '</a>' + statusBadge + assignee +
             '<span class="list-card-date">' + escapeHtml((t.linked_at || "").substring(0, 10)) + '</span>' +
           '</div>' +
           '<div class="list-card-body">' + escapeHtml(t.source_jenkins_text || "") + '</div>' +
@@ -667,16 +686,44 @@ const char *kIndexHtml = R"HTML(<!doctype html>
             source_jenkins_text: affected,
             ticket_status: rec.ticket_status,
             ticket_status_category: rec.ticket_status_category,
+            ticket_assignee: rec.ticket_assignee,
           };
         });
+    }
+
+    function normalizeTicketKey(key) {
+      return String(key || "").trim().toUpperCase();
+    }
+
+    // Overlays linked_ticket_status.json ({"TOR-1234": {status, category,
+    // assignee, error, ...}}) onto the human-linked entries, by ticket key.
+    function applyLinkedTicketStatus(entries, statusData) {
+      var byKey = {};
+      Object.keys(statusData || {}).forEach(function (k) {
+        byKey[normalizeTicketKey(k)] = statusData[k];
+      });
+      return entries.map(function (t) {
+        var rec = byKey[normalizeTicketKey(t.ticket || deriveTicketLabel(t.ticket_url))];
+        if (!rec) return t;
+        var out = Object.assign({}, t);
+        if (rec.error) {
+          out.ticket_status_error = rec.error;
+        } else {
+          out.ticket_status = rec.status;
+          out.ticket_status_category = rec.category;
+          out.ticket_assignee = rec.assignee;
+        }
+        return out;
+      });
     }
 
     function refreshLinkedTickets() {
       Promise.all([
         fetch("linked_tickets.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return { entries: [] }; }),
         fetch("failure_signatures.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+        fetch("linked_ticket_status.json?t=" + Date.now()).then(function (r) { return r.json(); }).catch(function () { return {}; }),
       ]).then(function (results) {
-        var fromCatalog = results[0].entries || [];
+        var fromCatalog = applyLinkedTicketStatus(results[0].entries || [], results[2]);
         var fromSignatures = signatureTicketsToEntries(results[1]);
         var merged = fromCatalog.concat(fromSignatures);
         merged.sort(function (a, b) { return (b.linked_at || "").localeCompare(a.linked_at || ""); });
@@ -711,6 +758,7 @@ int main(int argc, char *argv[])
     });
     ReferenceCatalogSource signaturesSource(stateDir, outputDir, {
         {QStringLiteral("failure_signatures.json"), QStringLiteral("failure_signatures.json")},
+        {QStringLiteral("linked_ticket_status.json"), QStringLiteral("linked_ticket_status.json")},
     });
 
     QQmlEngine engine;
